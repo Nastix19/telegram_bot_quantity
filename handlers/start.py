@@ -1,3 +1,4 @@
+# handlers/start.py
 from aiogram import types
 from aiogram.filters import Command
 from aiogram.types import BotCommand
@@ -18,4 +19,9 @@ async def set_bot_commands(bot):
         BotCommand(command="stock", description="Поиск товара"),
         BotCommand(command="minimum", description="Минимальные остатки"),
     ]
-    await bot.set_my_commands(commands)
+    try:
+        await bot.set_my_commands(commands)
+    except Exception:
+        # не критично, команда может быть уже установлена
+        pass
+

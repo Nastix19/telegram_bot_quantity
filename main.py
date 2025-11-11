@@ -1,18 +1,20 @@
-import asyncio
-from aiogram import Bot, Dispatcher
-from handlers import start, stock
+# main.py
 
-TELEGRAM_TOKEN = "8340376388:AAFIxZiyawsbJ2W9q1dpqD9gB2GugLSeC0Q"
+from fastapi import FastAPI
+from database import init_db
+from regos_router import router as regos_router
+from telegram_router import router as telegram_router
 
-bot = Bot(token=TELEGRAM_TOKEN)
-dp = Dispatcher()
+app = FastAPI(title="Telegram Bot Quantity Backend")
 
-async def main():
-    dp.include_router(start.router)
-    dp.include_router(stock.router)
+# Инициализация базы данных
+init_db()
 
-    await start.set_bot_commands(bot)
-    await dp.start_polling(bot, skip_updates=True)
+# Подключение маршрутов
+app.include_router(regos_router)
+app.include_router(telegram_router)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+@app.on_event("startup")
+async def on_startup():
+    print("Backend запущен и готов принимать вебхуки от Telegram")
+
