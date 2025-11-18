@@ -4,9 +4,7 @@ from typing import List, Dict, Optional
 
 class RegosClient:
     """
-    Простой синхронный клиент для вызовов REGOS API.
-    base_url должен выглядеть как:
-      https://integration.regos.uz/gateway/out/{connected_integration_id}/v1
+
     """
     def __init__(self, base_url: str, timeout: int = 30):
         self.base_url = base_url.rstrip("/")
@@ -27,7 +25,7 @@ class RegosClient:
     def get_current_quantity(self, item_ids: List[int], stock_ids: List[int]) -> Dict[int, Dict[int, float]]:
         if not stock_ids:
             raise ValueError("stock_ids обязателен")
-        # API может принимать большие массивы — отправляем пакетами по 250
+        #  отправляем пакетами по 250
         all_results: Dict[int, Dict[int, float]] = {}
         for i in range(0, len(item_ids), 250):
             batch = item_ids[i:i + 250]

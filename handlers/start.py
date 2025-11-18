@@ -22,6 +22,5 @@ async def set_bot_commands(bot):
     try:
         await bot.set_my_commands(commands)
     except Exception:
-        # не критично, команда может быть уже установлена
         pass
 

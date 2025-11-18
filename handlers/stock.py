@@ -1,19 +1,16 @@
-# handlers/stock.py
 import os
 import pandas as pd
 from aiogram import types, F, Router
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from services.regos_client import RegosClient
-from typing import Optional, List, Dict
+from typing import Optional
 
 router = Router()
 
-# Client будет установлен из telegram_router перед обработкой апдейта
 _client: Optional[RegosClient] = None
 
 def set_client(base_url: str):
-    """Установить RegosClient для текущего connected_integration_id"""
     global _client
     _client = RegosClient(base_url=base_url)
 
@@ -22,13 +19,15 @@ def _get_client() -> RegosClient:
         raise RuntimeError("RegosClient не инициализирован. Вызывайте set_client(base_url).")
     return _client
 
+#  КОМАНДА /stock
 @router.message(Command("stock"))
 async def search_cmd(message: types.Message):
     await message.answer("Введите название товара для поиска:")
 
+#  КОМАНДА /minimum
 @router.message(Command("minimum"))
 async def low_stock_cmd(message: types.Message):
-    client = _get_client()
+    client = _get_client()  # Получаем текущий клиент
     stocks = client.get_stocks()
     if not stocks:
         await message.answer("Склады не найдены")
@@ -36,12 +35,18 @@ async def low_stock_cmd(message: types.Message):
 
     kb = InlineKeyboardBuilder()
     for stock in stocks:
-        kb.button(text=stock.get("name", f"ID {stock.get('id')}"), callback_data=f"stock_{stock.get('id')}")
+        kb.button(
+            text=stock.get("name", f"ID {stock.get('id')}"),
+            callback_data=f"stock_{stock.get('id')}"
+        )
     kb.adjust(1)
     await message.answer("Выберите склад:", reply_markup=kb.as_markup())
 
+#  ВЫБОР СКЛАДА
 @router.callback_query(lambda c: c.data and c.data.startswith("stock_"))
 async def show_minimum_for_stock(callback: types.CallbackQuery):
+    client = _get_client()  # Получаем текущий клиент
+
     try:
         stock_id = int(callback.data.split("_", 1)[1])
     except Exception:
@@ -50,15 +55,20 @@ async def show_minimum_for_stock(callback: types.CallbackQuery):
 
     await callback.message.edit_text("Загружаю данные...")
 
-    client = _get_client()
     stocks = client.get_stocks()
-    stock_name = next((s.get("name") for s in stocks if s.get("id") == stock_id), f"ID {stock_id}")
+    stock_name = next(
+        (s.get("name") for s in stocks if s.get("id") == stock_id),
+        f"ID {stock_id}"
+    )
 
     items = client.get_items(limit=1000)
     item_ids = [i.get("id") for i in items if "id" in i]
     min_by_id = {i.get("id"): i.get("min_quantity", 0) for i in items if "id" in i}
 
-    quantities = client.get_current_quantity(item_ids=item_ids, stock_ids=[stock_id])
+    quantities = client.get_current_quantity(
+        item_ids=item_ids,
+        stock_ids=[stock_id]
+    )
 
     low_stock_data = []
     for item in items:
@@ -97,14 +107,16 @@ async def show_minimum_for_stock(callback: types.CallbackQuery):
         except Exception:
             pass
 
-@router.message(F.text)
+#  ПОИСК ПО НАЗВАНИЮ
+@router.message(F.text & ~F.text.startswith("/"))
 async def handle_text(message: types.Message):
+    client = _get_client()  # Получаем текущий клиент
+
     query = message.text.strip().lower()
     if not query:
         await message.reply("Введите название товара для поиска.")
         return
 
-    client = _get_client()
     items = client.get_items(limit=1000)
     found = [i for i in items if query in (i.get("name") or "").lower()]
 
