@@ -1,20 +1,24 @@
 # main.py
-
 from fastapi import FastAPI
-from database import init_db
-from regos_router import router as regos_router
-from telegram_router import router as telegram_router
+from contextlib import asynccontextmanager
+from app.bot.manager import bot_manager
+from app.api import integration_router, bot_router
+from app.core.db import create_db_and_tables as create_tables
 
-app = FastAPI(title="Telegram Bot Quantity Backend")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await create_tables()
+    print("Сервис запущен")
+    yield
+    print("Останавливаем боты...")
+    await bot_manager.shutdown()
 
-# Инициализация базы данных
-init_db()
+app = FastAPI(lifespan=lifespan)
 
-# Подключение маршрутов
-app.include_router(regos_router)
-app.include_router(telegram_router)
 
-@app.on_event("startup")
-async def on_startup():
-    print("Backend запущен и готов принимать вебхуки от Telegram")
+app.include_router(integration_router.router)
+app.include_router(bot_router.router, prefix="/webhook")
 
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "REGOS Quantity Bot работает!"}
