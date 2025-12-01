@@ -1,17 +1,23 @@
-# app/bot/handlers.py
 import pandas as pd
 from io import BytesIO
+import asyncio
+import logging
+
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, FSInputFile, BotCommand
+from aiogram.types import (
+    Message, CallbackQuery, BufferedInputFile,
+)
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-import logging
 logger = logging.getLogger(__name__)
 
 router = Router()
 
 
+# -----------------------------
+# /start
+# -----------------------------
 @router.message(Command("start"))
 async def start_cmd(message: Message):
     await message.answer(
@@ -20,11 +26,17 @@ async def start_cmd(message: Message):
     )
 
 
+# -----------------------------
+# /stock
+# -----------------------------
 @router.message(Command("stock"))
 async def search_cmd(message: Message):
     await message.answer("Введите название товара для поиска:")
 
 
+# -----------------------------
+# /minimum → выбор склада
+# -----------------------------
 @router.message(Command("minimum"))
 async def low_stock_cmd(message: Message):
     stocks = await message.bot.client.get_stocks()
@@ -40,58 +52,106 @@ async def low_stock_cmd(message: Message):
     await message.answer("Выберите склад:", reply_markup=kb.as_markup())
 
 
+# -----------------------------
+# Обработчик нажатия "min_ID"
+# -----------------------------
 @router.callback_query(F.data.startswith("min_"))
 async def show_minimum(callback: CallbackQuery):
     stock_id = int(callback.data.split("_")[1])
     client = callback.bot.client
 
     try:
+        # Получаем имя склада
         stocks = await client.get_stocks()
         stock_name = next((s["name"] for s in stocks if s["id"] == stock_id), "Склад")
 
+        # Получаем товары
         items = await client.get_items()
         if not items:
             await callback.message.edit_text("Нет товаров в системе.")
             return
 
-        quantities = await client.get_current_quantity([i["id"] for i in items], [stock_id])
+        quantities = await client.get_current_quantity(
+            [i["id"] for i in items], [stock_id]
+        )
 
+        # Формируем список товаров с низким остатком
         low = []
         for item in items:
             qty = quantities.get(item["id"], {}).get(stock_id, 0)
             if qty <= item.get("min_quantity", 0):
-                low.append({"Товар": item["name"], "Остаток": qty, "Мин.": item["min_quantity"]})
+                low.append({
+                    "Товар": item["name"],
+                    "Остаток": qty,
+                    "Мин.": item.get("min_quantity", 0)
+                })
 
         if not low:
-            await callback.message.edit_text(f"На складе «{stock_name}» всё в норме! ✅")
+            await callback.message.edit_text(
+                f"На складе «{stock_name}» всё в норме! ✅"
+            )
             return
 
-        # Формируем файл
+        # Создаём Excel-файл в памяти
         df = pd.DataFrame(low)
         bio = BytesIO()
         df.to_excel(bio, index=False, engine="openpyxl")
         bio.seek(0)
 
-        # ← ЭТО ЕДИНСТВЕННЫЙ РАЗРЕШЁННЫЙ ОТВЕТ НА CALLBACK_QUERY
+        file_size = len(bio.getvalue())
+        logger.info(f"Формируем файл {file_size} bytes для склада {stock_name}")
+
         await callback.message.edit_text(
-            text=f"Товары с низким остатком на складе «{stock_name}»",
-            reply_markup=None
+            f"Файл с низким остатком для склада «{stock_name}» готов, отправляем..."
         )
 
-        # ← ОТПРАВЛЯЕМ ДОКУМЕНТ В ОТДЕЛЬНОМ СООБЩЕНИИ — ЭТО РАЗРЕШЕНО!
-        await callback.bot.send_document(
+        # -------------------------
+        # Функция отправки файла с retry
+        # -------------------------
+        async def send_file_with_retry(chat_id, bio, caption, retries=3):
+            file = BufferedInputFile(
+                file=bio.getvalue(),
+                filename=f"Минимальные_остатки_{stock_name}.xlsx"
+            )
+
+            for attempt in range(1, retries + 1):
+                try:
+                    await callback.bot.send_document(
+                        chat_id=chat_id,
+                        document=file,
+                        caption=caption
+                    )
+                    logger.info(f"Файл отправлен в чат {chat_id}")
+                    return True
+
+                except Exception as e:
+                    logger.warning(f"Попытка {attempt} не удалась: {e}")
+
+                    if attempt == retries:
+                        raise
+
+                    await asyncio.sleep(2)
+
+        # Отправка файла
+        await send_file_with_retry(
             chat_id=callback.from_user.id,
-            document=FSInputFile(bio, filename=f"Минимальные_остатки_{stock_name}.xlsx"),
+            bio=bio,
             caption=f"Склад: {stock_name}\nТоваров с низким остатком: {len(low)}"
         )
 
     except Exception as e:
         logger.error(f"Ошибка в show_minimum: {e}")
         try:
-            await callback.message.edit_text("Произошла ошибка при загрузке данных.")
+            await callback.message.edit_text(
+                "Произошла ошибка при загрузке данных или отправке файла."
+            )
         except:
             pass
 
+
+# -----------------------------
+# Поиск товаров (обычный текст)
+# -----------------------------
 @router.message(F.text)
 async def search_item(message: Message):
     query = message.text.strip().lower()
@@ -107,7 +167,8 @@ async def search_item(message: Message):
     stocks = await message.bot.client.get_stocks()
     stock_ids = [s["id"] for s in stocks]
     quantities = await message.bot.client.get_current_quantity(
-        [i["id"] for i in items], stock_ids
+        [i["id"] for i in items],
+        stock_ids
     )
 
     lines = []
@@ -115,6 +176,7 @@ async def search_item(message: Message):
         q = quantities.get(item["id"], {})
         total = sum(q.values())
         status = "Мало" if total <= item.get("min_quantity", 0) else "OK"
+
         lines.append(
             f"*{item['name']}*\n"
             f"Всего: {total} | Статус: {status}\n" +
