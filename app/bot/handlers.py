@@ -63,7 +63,7 @@ async def show_minimum(callback: CallbackQuery):
         df.to_excel(bio, index=False, engine="openpyxl")
         bio.seek(0)
 
-        file = BufferedInputFile(bio.getvalue(), filename=f"Остатки_{stock_name}.xlsx")
+        file = BufferedInputFile(bio.getvalue(), filename=f"Минимальные_остатки_{stock_name}.xlsx")
 
         await callback.bot.send_document(
             chat_id=callback.from_user.id,
