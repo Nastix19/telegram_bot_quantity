@@ -1,27 +1,19 @@
-# app/api/bot_router.py
 from fastapi import APIRouter, Request, Header, HTTPException
 from app.bot.manager import bot_manager
+from aiogram.types import Update
 
 router = APIRouter()
 
 @router.post("/{conn_id}")
-async def telegram_webhook(
-    conn_id: str,
-    request: Request,
-    x_telegram_bot_api_secret_token: str | None = Header(default=None)
-):
-    # Проверка secret token (Telegram присылает его в заголовке)
+async def webhook(conn_id: str, request: Request, x_telegram_bot_api_secret_token: str = Header(None)):
     if x_telegram_bot_api_secret_token != conn_id:
-        raise HTTPException(403, "Forbidden")
+        raise HTTPException(403)
 
-    # Получаем уже запущенный бот по conn_id
-    runtime = bot_manager.bots.get(conn_id)
+    runtime = bot_manager.get_runtime(conn_id)
     if not runtime:
-        raise HTTPException(404, "Bot not running")
+        raise HTTPException(404)
 
-    # Парсим и отправляем обновление в aiogram
-    update_dict = await request.json()
-    from aiogram.types import Update
-    await runtime["dp"].feed_update(bot=runtime["bot"], update=Update(**update_dict))
+    update = Update(**(await request.json()))
+    await runtime["dp"].feed_update(runtime["bot"], update)
 
     return {"ok": True}
