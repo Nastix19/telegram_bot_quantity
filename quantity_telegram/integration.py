@@ -24,7 +24,7 @@ class QuantityTelegramIntegration(IntegrationTelegramBase):
         self.dp: Optional[Dispatcher] = None
         self._handlers_ready = False
 
-    # ==================== INIT ====================
+    #
 
     async def _initialize_bot(self):
         if self.bot:
@@ -56,7 +56,7 @@ class QuantityTelegramIntegration(IntegrationTelegramBase):
         self.dp.include_router(router)
         self._handlers_ready = True
 
-    # ==================== REGOS API ====================
+    #
 
     async def get_items(self) -> List[Dict]:
         """
@@ -135,7 +135,7 @@ class QuantityTelegramIntegration(IntegrationTelegramBase):
 
         return result
 
-    # ==================== LIFECYCLE ====================
+    #
 
     async def connect(self, **kwargs) -> Dict:
         await self._initialize_bot()
@@ -167,7 +167,7 @@ class QuantityTelegramIntegration(IntegrationTelegramBase):
             result={"status": "settings updated"}
         )
 
-    # ==================== TELEGRAM WEBHOOK ====================
+    #
 
     async def handle_external(self, envelope: Dict) -> Dict:
         payload = envelope.get("body")
