@@ -31,7 +31,6 @@ class QuantityTelegramIntegration(IntegrationTelegramBase):
             return
 
         settings_map = await self._fetch_settings()
-
         bot_token = settings_map.get("bot_token")
         if not bot_token:
             raise ValueError("BOT_TOKEN не указан в настройках интеграции")
@@ -43,7 +42,7 @@ class QuantityTelegramIntegration(IntegrationTelegramBase):
 
         self.dp = Dispatcher(storage=MemoryStorage())
 
-        # Пробрасываем методы REGOS API в bot
+        # пробрасываем API в handlers
         self.bot.get_items = self.get_items
         self.bot.get_stocks = self.get_stocks
         self.bot.get_current_quantity = self.get_current_quantity
@@ -60,9 +59,30 @@ class QuantityTelegramIntegration(IntegrationTelegramBase):
     # ==================== REGOS API ====================
 
     async def get_items(self) -> List[Dict]:
+        """
+        Получаем все товары через Item/Get (НЕ устаревший метод).
+        Без остатков, только данные номенклатуры.
+        """
+        items: List[Dict] = []
+        offset = 0
+        limit = 1000
+
         async with self.regos_api as api:
-            resp = await api.item.get(limit=1000)
-            return resp.result or []
+            while True:
+                resp = await api.item.get(
+                    limit=limit,
+                    offset=offset,
+                )
+
+                batch = resp.result or []
+                items.extend(batch)
+
+                if len(batch) < limit:
+                    break
+
+                offset += limit
+
+        return items
 
     async def get_stocks(self) -> List[Dict]:
         async with self.regos_api as api:
@@ -70,23 +90,48 @@ class QuantityTelegramIntegration(IntegrationTelegramBase):
             return resp.result or []
 
     async def get_current_quantity(
-        self, item_ids: List[int], stock_ids: List[int]
-    ) -> Dict:
-        result: Dict[int, Dict[int, int]] = {}
+        self,
+        item_ids: List[int],
+        stock_ids: List[int],
+    ) -> Dict[int, Dict[int, int]]:
+        """
+        Остатки через Item/GetExt (НОВЫЙ API).
+        result[item_id][stock_id] = quantity.common
+        """
+        result: Dict[int, Dict[int, int]] = {
+            item_id: {} for item_id in item_ids
+        }
 
         async with self.regos_api as api:
-            for i in range(0, len(item_ids), 250):
-                batch = item_ids[i : i + 250]
-                resp = await api.item.get_current_quantity(
-                    item_ids=batch,
-                    stock_ids=stock_ids,
-                )
-                for e in resp.result or []:
-                    item_id = e.get("item_id")
-                    stock_id = e.get("stock_id")
-                    qty = e.get("quantity")
-                    if item_id is not None and stock_id is not None:
-                        result.setdefault(item_id, {})[stock_id] = qty
+            for stock_id in stock_ids:
+                offset = 0
+                limit = 250
+
+                while True:
+                    resp = await api.item.get_ext(
+                        ids=item_ids,
+                        stock_id=stock_id,
+                        zero_quantity=True,
+                        limit=limit,
+                        offset=offset,
+                    )
+
+                    batch = resp.result or []
+
+                    for ext in batch:
+                        item_id = ext.item.id
+                        qty = (
+                            ext.quantity.common
+                            if ext.quantity and ext.quantity.common is not None
+                            else 0
+                        )
+                        if item_id in result:
+                            result[item_id][stock_id] = qty
+
+                    if len(batch) < limit:
+                        break
+
+                    offset += limit
 
         return result
 
@@ -94,17 +139,11 @@ class QuantityTelegramIntegration(IntegrationTelegramBase):
 
     async def connect(self, **kwargs) -> Dict:
         await self._initialize_bot()
-
         webhook_url = (
             f"{self.config.external_base_url}/"
             f"{self.connected_integration_id}/external/"
         )
-
-        await self.bot.set_webhook(
-            url=webhook_url,
-            drop_pending_updates=True,
-        )
-
+        await self.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
         logger.info(f"Webhook установлен: {webhook_url}")
         return {"status": "connected", "webhook_url": webhook_url}
 
@@ -114,13 +153,11 @@ class QuantityTelegramIntegration(IntegrationTelegramBase):
                 await self.bot.delete_webhook(drop_pending_updates=True)
             except Exception as e:
                 logger.warning(f"Ошибка удаления webhook: {e}")
-
-            await self.bot.close()
+            await self.bot.session.close()
 
         self.bot = None
         self.dp = None
         self._handlers_ready = False
-
         return {"status": "disconnected"}
 
     async def update_settings(self, **kwargs) -> IntegrationSuccessResponse:
@@ -134,7 +171,6 @@ class QuantityTelegramIntegration(IntegrationTelegramBase):
 
     async def handle_external(self, envelope: Dict) -> Dict:
         payload = envelope.get("body")
-
         if not isinstance(payload, dict):
             return IntegrationErrorResponse(
                 result=IntegrationErrorModel(
@@ -147,7 +183,7 @@ class QuantityTelegramIntegration(IntegrationTelegramBase):
             await self._initialize_bot()
             update = types.Update.model_validate(payload)
             await self.dp.feed_update(self.bot, update)
-        except Exception as e:
+        except Exception:
             logger.exception("Ошибка обработки Telegram update")
             return IntegrationErrorResponse(
                 result=IntegrationErrorModel(
