@@ -1,9 +1,0 @@
-fastapi
-uvicorn[standard]
-aiogram==3.13.1
-sqlalchemy[asyncio]
-aiosqlite
-pydantic-settings
-pandas
-openpyxl
-aiohttp
